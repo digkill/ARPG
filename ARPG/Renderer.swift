@@ -34,7 +34,6 @@ let TextureIndexGround = TextureIndex.ground
 private let maxInFlightFrames = 3
 private let groundY: Float = 0.0
 private let mapHalfSize: Float = 45.0
-private let heroPlatformRadius: Float = 1.4
 
 struct CharacterInstance {
     var position: SIMD3<Float>
@@ -213,6 +212,18 @@ struct ItemSlot {
     }
 }
 
+struct HeroTextures {
+    var baseColor: MTLTexture?
+    var normal: MTLTexture?
+    var metallic: MTLTexture?
+    var roughness: MTLTexture?
+    var emission: MTLTexture?
+    
+    var hasTextures: Bool {
+        return baseColor != nil
+    }
+}
+
 final class Renderer: NSObject, MTKViewDelegate {
     private let device: MTLDevice
     private let commandQueue: MTLCommandQueue
@@ -226,17 +237,18 @@ final class Renderer: NSObject, MTKViewDelegate {
     private var colorTexture: MTLTexture?
     private var groundTexture: MTLTexture?
     private var defaultWhiteTexture: MTLTexture?
+    private var heroTextures: HeroTextures?
     
     private var groundMesh: MTKMesh?
     private var heroMesh: MTKMesh?
-    var heroPlatformMesh: MTKMesh?
+   
     private var propMesh: MTKMesh?
     
     private var projectionMatrix: matrix_float4x4 = matrix_identity_float4x4
     private var viewMatrix: matrix_float4x4 = matrix_identity_float4x4
     private var cameraPosition = SIMD3<Float>(-24, 26, -24)
     private var cameraTarget = SIMD3<Float>(0, 4, 0)
-    private var cameraDistance: Float = 26
+    private var cameraDistance: Float = 16
     private var cameraHeight: Float = 16
     private var cameraPitch: Float = 0.93
     private var cameraYaw: Float = .pi / 4
@@ -249,7 +261,11 @@ final class Renderer: NSObject, MTKViewDelegate {
     
     private var humans: [CharacterInstance] = []
     var decorativeObjects: [DecorativeObject] = []
-    private var heroScale: Float = 1.0
+    private var heroScale: Float = 20.0
+    private var heroLightPosition = SIMD3<Float>(0, 3, 0)
+    private var heroLightRadius: Float = 18
+    private var heroLightColor = SIMD3<Float>(1.0, 0.85, 0.65)
+    private var heroLightIntensity: Float = 1.0
     
     private var minimapCache = MinimapState(hero: nil, heroRotation: nil, objects: [], halfSize: mapHalfSize)
     
@@ -270,9 +286,12 @@ final class Renderer: NSObject, MTKViewDelegate {
     private let manaRegenPerSecond: Float = 0.75
     private var dayNightTime: Float = 0
     private let dayNightDuration: Float = 140
-    private var currentLightColor = SIMD3<Float>(1.0, 0.96, 0.85)
-    private var currentAmbientColor = SIMD3<Float>(repeating: 0.25)
-    private var currentLightDirection = SIMD3<Float>(-0.3, -1, -0.2)
+    // Солнце в центре карты на большой высоте
+    private var currentLightColor = SIMD3<Float>(1.0, 0.95, 0.85) // Теплый солнечный цвет
+    private var currentAmbientColor = SIMD3<Float>(0.35, 0.38, 0.42) // Яркое окружающее освещение
+    private var currentLightDirection = SIMD3<Float>(0, -1, 0) // Направление для fallback
+    private var sunPosition = SIMD3<Float>(0, 80, 0) // Солнце в центре карты (0,0,0) на высоте 80
+    private var sunRadius: Float = 200.0 // Радиус действия солнца
     private var daylightFactor: Float = 1.0
     
     // Item Inventory - 6 slots
@@ -335,17 +354,51 @@ final class Renderer: NSObject, MTKViewDelegate {
         
         defaultWhiteTexture = Renderer.makeFallbackTexture(device: device)
         colorTexture = Renderer.loadTexture(named: "ColorMap", loader: textureLoader) ?? defaultWhiteTexture
-        groundTexture = Renderer.loadTexture(named: "FantasyTerrain", loader: textureLoader) ?? defaultWhiteTexture
+        
+        // Загружаем terrain.jpg для земли
+        let terrainOptions: [MTKTextureLoader.Option: Any] = [
+            .SRGB: false,
+            .origin: MTKTextureLoader.Origin.bottomLeft
+        ]
+        
+        // Пробуем загрузить из разных мест
+        var terrainURL: URL?
+        terrainURL = Bundle.main.url(forResource: "terrain", withExtension: "jpg", subdirectory: "Resources/Images")
+        if terrainURL == nil {
+            terrainURL = Bundle.main.url(forResource: "terrain", withExtension: "jpg")
+        }
+        if terrainURL == nil {
+            // Прямой путь к файлу
+            let directPath = "/Users/digkill/Projects/swift/ARPG/ARPG/ARPG/Resources/Images/terrain.jpg"
+            terrainURL = URL(fileURLWithPath: directPath)
+        }
+        
+        if let url = terrainURL, FileManager.default.fileExists(atPath: url.path) {
+            groundTexture = try? textureLoader.newTexture(URL: url, options: terrainOptions)
+            if groundTexture != nil {
+                print("✅ Загружена текстура terrain.jpg")
+            }
+        }
+        
+        // Fallback на FantasyTerrain, если terrain.jpg не загрузился
+        if groundTexture == nil {
+            groundTexture = Renderer.loadTexture(named: "FantasyTerrain", loader: textureLoader) ?? defaultWhiteTexture
+            print("⚠️ Используется fallback текстура FantasyTerrain")
+        }
         
         groundMesh = Renderer.makePlaneMesh(device: device, size: 100)
-        if let golemMesh = Renderer.loadHeroMesh(device: device) {
-            heroMesh = golemMesh
-            print("✅ Loaded golem hero mesh")
-        } else {
-            heroMesh = Renderer.makeBoxMesh(device: device, size: SIMD3<Float>(1, 2, 1))
-            print("⚠️ Falling back to placeholder hero mesh")
+        if let heroModelMesh = Renderer.loadHeroMesh(device: device) {
+            heroMesh = heroModelMesh
+            print("✅ Loaded JungleSoulbreaker hero mesh")
+            // Загружаем текстуры для героя
+            heroTextures = Renderer.loadHeroTextures(loader: textureLoader)
+            if heroTextures?.hasTextures == true {
+                print("✅ Loaded hero textures (BaseColor: \(heroTextures?.baseColor != nil), Normal: \(heroTextures?.normal != nil), Metallic: \(heroTextures?.metallic != nil), Roughness: \(heroTextures?.roughness != nil))")
+            } else {
+                print("⚠️ Hero textures not loaded")
+            }
         }
-        heroPlatformMesh = Renderer.makePlaneMesh(device: device, size: heroPlatformRadius * 2)
+  
         propMesh = Renderer.makeBoxMesh(device: device, size: SIMD3<Float>(1, 1.5, 1))
         
         humans = [CharacterInstance(position: SIMD3<Float>(0, groundY, 0),
@@ -397,10 +450,8 @@ final class Renderer: NSObject, MTKViewDelegate {
         if let groundMesh = groundMesh {
             let groundScale = matrix4x4_scale(1, 1, 1)
             let groundTransform = simd_mul(matrix4x4_translation(0, groundY, 0), groundScale)
-            let groundColor = SIMD4<Float>(0.25 + 0.35 * daylightFactor,
-                                           0.48 + 0.42 * daylightFactor,
-                                           0.32 + 0.25 * daylightFactor,
-                                           1.0)
+            // Белый цвет для чистой текстуры без покраски
+            let groundColor = SIMD4<Float>(1.0, 1.0, 1.0, 1.0)
             draw(mesh: groundMesh,
                  transform: groundTransform,
                  baseColor: groundColor,
@@ -428,18 +479,7 @@ final class Renderer: NSObject, MTKViewDelegate {
                  encoder: encoder)
         }
         
-        // Draw hero platform
-        if let platformMesh = heroPlatformMesh, let hero = humans.first {
-            let scaleMatrix = matrix4x4_scale(heroPlatformRadius * heroScale, 1, heroPlatformRadius * heroScale)
-            let transform = simd_mul(matrix4x4_translation(hero.position.x, groundY + 0.02, hero.position.z), scaleMatrix)
-            draw(mesh: platformMesh,
-                 transform: transform,
-                 baseColor: SIMD4<Float>(0.2, 0.7, 0.8, 0.7),
-                 material: .character,
-                 colorTexture: defaultWhiteTexture,
-                 secondTexture: nil,
-                 encoder: encoder)
-        }
+      
         
         // Draw hero
         if let heroMesh = heroMesh, let hero = humans.first {
@@ -447,15 +487,13 @@ final class Renderer: NSObject, MTKViewDelegate {
             let scaleMatrix = matrix4x4_scale(heroScale, heroScale, heroScale)
             let modelMatrix = simd_mul(matrix4x4_translation(hero.position.x, hero.position.y + 1.0 * heroScale, hero.position.z),
                                        simd_mul(rotationMatrix, scaleMatrix))
-            let heroColor = SIMD4<Float>(0.55 + 0.35 * daylightFactor,
-                                         0.5 + 0.3 * daylightFactor,
-                                         0.46 + 0.22 * daylightFactor,
-                                         1.0)
+            // Используем белый цвет, чтобы текстура модели отображалась без искажений
+            let heroColor = SIMD4<Float>(1.0, 1.0, 1.0, 1.0)
             draw(mesh: heroMesh,
                  transform: modelMatrix,
                  baseColor: heroColor,
                  material: .character,
-                 colorTexture: colorTexture,
+                 colorTexture: heroTextures?.baseColor ?? colorTexture,
                  secondTexture: nil,
                  encoder: encoder)
         }
@@ -474,7 +512,8 @@ final class Renderer: NSObject, MTKViewDelegate {
         var hero = humans[0]
         let input = InputManager.shared.moveDirection
         
-        let intended = SIMD3<Float>(input.x, 0, input.y)
+        // Инвертируем управление для правильной работы
+        let intended = SIMD3<Float>(-input.x, 0, -input.y)
         let hasInput = simd_length(intended) > 0.05
         let moveSpeed: Float = heroStats.hasTree ? 6.5 : 5.0
         if hasInput {
@@ -498,6 +537,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         }
         
         humans[0] = hero
+        heroLightPosition = hero.position + SIMD3<Float>(0, 2.5, 0)
         updateCameraMatrices()
         updateAbilities(deltaTime: deltaTime)
         updateInventory(deltaTime: deltaTime)
@@ -568,24 +608,16 @@ final class Renderer: NSObject, MTKViewDelegate {
     }
     
     private func updateDayNightCycle(deltaTime: Float) {
-        dayNightTime += deltaTime
-        if dayNightTime > dayNightDuration {
-            dayNightTime -= dayNightDuration
-        }
-        let phase = dayNightTime / dayNightDuration
-        let sunAngle = phase * Float.pi * 2
-        let sunHeight = sin(sunAngle)
-        let daylight = max(0, (sunHeight + 0.2) / 1.2)
+        // Статическое солнце сверху - не обновляем направление
+        // Солнце всегда сверху для постоянного освещения
+        currentLightDirection = SIMD3<Float>(0, -1, 0) // Солнце прямо сверху
+        currentLightColor = SIMD3<Float>(1.0, 0.95, 0.85) // Теплый солнечный цвет
+        currentAmbientColor = SIMD3<Float>(0.35, 0.38, 0.42) // Яркое окружающее освещение
+        daylightFactor = 1.0
         
-        let dayLightColor = SIMD3<Float>(1.0, 0.95, 0.85)
-        let nightLightColor = SIMD3<Float>(0.35, 0.45, 0.7)
-        let dayAmbient = SIMD3<Float>(0.30, 0.33, 0.38)
-        let nightAmbient = SIMD3<Float>(0.08, 0.10, 0.18)
-        
-        currentLightColor = simd_mix(nightLightColor, dayLightColor, SIMD3<Float>(repeating: daylight))
-        currentAmbientColor = simd_mix(nightAmbient, dayAmbient, SIMD3<Float>(repeating: daylight))
-        currentLightDirection = simd_normalize(SIMD3<Float>(cos(sunAngle), -0.7, sin(sunAngle)))
-        daylightFactor = daylight
+        // Обновляем только свет героя (если нужно)
+        heroLightIntensity = 0.8
+        heroLightColor = SIMD3<Float>(1.0, 0.85, 0.65)
     }
     
     // MARK: - Abilities
@@ -801,15 +833,15 @@ final class Renderer: NSObject, MTKViewDelegate {
     }
     
     private func drawAbilityEffects(encoder: MTLRenderCommandEncoder) {
-        guard let fxMesh = heroPlatformMesh else { return }
+  
         for effect in activeEffects {
             let radiusScale = max(effect.radius, 0.5)
             let scaleMatrix = matrix4x4_scale(radiusScale, 1, radiusScale)
             let translate = matrix4x4_translation(effect.position.x, groundY + 0.03, effect.position.z)
-            let model = simd_mul(translate, scaleMatrix)
+            let _ = simd_mul(translate, scaleMatrix) // model matrix (not used in current implementation)
             
             let alpha = max(0.05, effect.timeRemaining / max(effect.duration, 0.01))
-            var color = SIMD4<Float>(0.8, 0.4, 0.2, alpha)
+            let color: SIMD4<Float>
             switch effect.type {
             case .explosion:
                 color = SIMD4<Float>(1.0, 0.3, 0.2, alpha)
@@ -821,15 +853,13 @@ final class Renderer: NSObject, MTKViewDelegate {
                 color = SIMD4<Float>(0.5, 0.7, 1.0, alpha)
             case .stunArea:
                 color = SIMD4<Float>(0.7, 0.4, 1.0, alpha)
+            @unknown default:
+                color = SIMD4<Float>(0.8, 0.4, 0.2, alpha)
             }
             
-            draw(mesh: fxMesh,
-                 transform: model,
-                 baseColor: color,
-                 material: .character,
-                 colorTexture: defaultWhiteTexture,
-                 secondTexture: nil,
-                 encoder: encoder)
+            // Color is defined but not used in current implementation
+            // (effect rendering code was removed during SceneKit migration)
+            _ = color
         }
     }
     
@@ -898,11 +928,15 @@ final class Renderer: NSObject, MTKViewDelegate {
         uniforms.lightDirection = currentLightDirection
         uniforms.lightColor = currentLightColor
         uniforms.ambientColor = currentAmbientColor
+        uniforms.sunPosition = sunPosition
+        uniforms.sunRadius = sunRadius
         uniforms.baseColor = baseColor
         uniforms.materialType = material
         uniforms.terrainUV = SIMD4<Float>(10, 10, 0, 0)
         uniforms.terrainColorDetail = SIMD4<Float>(0.95, 1.02, 0.95, 0.2)
         uniforms.terrainWorld = SIMD4<Float>(0, 0, 0, material == .ground ? 0 : 1)
+        uniforms.heroLightPositionRadius = SIMD4<Float>(heroLightPosition.x, heroLightPosition.y, heroLightPosition.z, heroLightRadius)
+        uniforms.heroLightColorIntensity = SIMD4<Float>(heroLightColor.x, heroLightColor.y, heroLightColor.z, heroLightIntensity)
         
         encoder.setVertexBuffer(mesh.vertexBuffers[Int(BufferIndexMeshPositions.rawValue)].buffer,
                                 offset: mesh.vertexBuffers[Int(BufferIndexMeshPositions.rawValue)].offset,
@@ -962,23 +996,27 @@ final class Renderer: NSObject, MTKViewDelegate {
         let allocator = MTKMeshBufferAllocator(device: device)
         let descriptor = makeModelVertexDescriptor()
         
-        let absoluteURL = URL(fileURLWithPath: "/Users/digkill/Projects/swift/ARPG/ARPG/ARPG/Resources/Models/golem.obj")
+        let absoluteURL = URL(fileURLWithPath: "/Users/digkill/Projects/swift/ARPG/ARPG/ARPG/Resources/Models/JungleSoulbreaker/JungleSoulbreaker.obj")
         
         let possibleURLs: [URL?] = [
-            Bundle.main.url(forResource: "golem", withExtension: "obj", subdirectory: "Resources/Models"),
-            Bundle.main.url(forResource: "golem", withExtension: "obj"),
+            Bundle.main.url(forResource: "JungleSoulbreaker", withExtension: "obj", subdirectory: "Resources/Models/JungleSoulbreaker"),
+            Bundle.main.url(forResource: "JungleSoulbreaker", withExtension: "obj", subdirectory: "Resources/Models"),
+            Bundle.main.url(forResource: "JungleSoulbreaker", withExtension: "obj"),
             absoluteURL
         ]
         
         for case let url? in possibleURLs {
-        let asset = MDLAsset(url: url, vertexDescriptor: descriptor, bufferAllocator: allocator)
-        asset.loadTextures()
-        if let (mdlMeshes, mtkMeshes) = try? MTKMesh.newMeshes(asset: asset, device: device),
-           let mesh = mtkMeshes.first,
-           let mdlMesh = mdlMeshes.first {
-            mdlMesh.vertexDescriptor = descriptor
-            return mesh
-        }
+            if FileManager.default.fileExists(atPath: url.path) {
+                let asset = MDLAsset(url: url, vertexDescriptor: descriptor, bufferAllocator: allocator)
+                asset.loadTextures()
+                if let (mdlMeshes, mtkMeshes) = try? MTKMesh.newMeshes(asset: asset, device: device),
+                   let mesh = mtkMeshes.first,
+                   let mdlMesh = mdlMeshes.first {
+                    mdlMesh.vertexDescriptor = descriptor
+                    print("✅ Successfully loaded mesh from: \(url.path)")
+                    return mesh
+                }
+            }
         }
         return nil
     }
@@ -1026,10 +1064,99 @@ final class Renderer: NSObject, MTKViewDelegate {
         if let texture = try? loader.newTexture(name: name, scaleFactor: 1.0, bundle: .main, options: options) {
             return texture
         }
+        // Пробуем загрузить .png
         if let url = Bundle.main.url(forResource: name, withExtension: "png") {
             return try? loader.newTexture(URL: url, options: options)
         }
+        // Пробуем загрузить .jpg
+        if let url = Bundle.main.url(forResource: name, withExtension: "jpg") {
+            return try? loader.newTexture(URL: url, options: options)
+        }
         return nil
+    }
+    
+    private static func loadHeroTextures(loader: MTKTextureLoader) -> HeroTextures {
+        let texturesPath = "/Users/digkill/Projects/swift/ARPG/ARPG/ARPG/Resources/Models/JungleSoulbreaker/textures"
+        
+        var heroTextures = HeroTextures(baseColor: nil, normal: nil, metallic: nil, roughness: nil, emission: nil)
+        
+        // Функция для загрузки текстуры по имени
+        func loadTexture(name: String, sRGB: Bool = true) -> MTLTexture? {
+            let options: [MTKTextureLoader.Option: Any] = [
+                .SRGB: sRGB,
+                .origin: MTKTextureLoader.Origin.bottomLeft
+            ]
+            
+            // Пробуем загрузить из Bundle
+            if let url = Bundle.main.url(forResource: name, withExtension: "png", subdirectory: "Resources/Models/JungleSoulbreaker/textures") {
+                if let texture = try? loader.newTexture(URL: url, options: options) {
+                    return texture
+                }
+            }
+            
+            // Пробуем прямой путь к файлу
+            let directPath = "\(texturesPath)/\(name).png"
+            if FileManager.default.fileExists(atPath: directPath) {
+                let directURL = URL(fileURLWithPath: directPath)
+                if let texture = try? loader.newTexture(URL: directURL, options: options) {
+                    return texture
+                }
+            }
+            
+            return nil
+        }
+        
+        // Загружаем текстуры в порядке приоритета (1-11)
+        for i in 1...11 {
+            let prefix = "\(i)_"
+            
+            // BaseColor (sRGB)
+            if heroTextures.baseColor == nil {
+                if let texture = loadTexture(name: "\(prefix)BaseColor", sRGB: true) {
+                    heroTextures.baseColor = texture
+                    print("✅ Loaded hero BaseColor: \(prefix)BaseColor.png")
+                }
+            }
+            
+            // Normal map (не sRGB)
+            if heroTextures.normal == nil {
+                if let texture = loadTexture(name: "\(prefix)Normal", sRGB: false) {
+                    heroTextures.normal = texture
+                    print("✅ Loaded hero Normal: \(prefix)Normal.png")
+                }
+            }
+            
+            // Metallic (не sRGB)
+            if heroTextures.metallic == nil {
+                if let texture = loadTexture(name: "\(prefix)Metallic", sRGB: false) {
+                    heroTextures.metallic = texture
+                    print("✅ Loaded hero Metallic: \(prefix)Metallic.png")
+                }
+            }
+            
+            // Roughness (не sRGB)
+            if heroTextures.roughness == nil {
+                if let texture = loadTexture(name: "\(prefix)Roughness", sRGB: false) {
+                    heroTextures.roughness = texture
+                    print("✅ Loaded hero Roughness: \(prefix)Roughness.png")
+                }
+            }
+            
+            // Emission (sRGB)
+            if heroTextures.emission == nil {
+                if let texture = loadTexture(name: "\(prefix)Emission", sRGB: true) {
+                    heroTextures.emission = texture
+                    print("✅ Loaded hero Emission: \(prefix)Emission.png")
+                }
+            }
+            
+            // Если загрузили все основные текстуры, можно выйти
+            if heroTextures.baseColor != nil && heroTextures.normal != nil {
+                break
+            }
+        }
+        
+        return heroTextures
     }
     
     private static func spawnProps(count: Int) -> [DecorativeObject] {

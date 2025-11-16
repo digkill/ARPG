@@ -6,14 +6,14 @@
 //
 
 import UIKit
-import MetalKit
+import SceneKit
 import simd
 
 // Our iOS specific view controller
 class GameViewController: UIViewController {
 
-    var renderer: Renderer!
-    var mtkView: MTKView!
+    var renderer: SceneKitRenderer!
+    var sceneView: SCNView!
     
     // Support only landscape orientation
     override var supportedInterfaceOrientations: UIInterfaceOrientationMask {
@@ -43,10 +43,10 @@ class GameViewController: UIViewController {
     var skill4Button: ActionButton!  // Ult
 
     override func loadView() {
-        // Create MTKView programmatically if not loaded from storyboard
-        let mtkView = MTKView()
-        mtkView.backgroundColor = .black
-        self.view = mtkView
+        // Create SCNView programmatically
+        let sceneView = SCNView()
+        sceneView.backgroundColor = .black
+        self.view = sceneView
     }
     
     override func viewDidLoad() {
@@ -59,65 +59,17 @@ class GameViewController: UIViewController {
         // Start game background music
         SoundManager.shared.playBackgroundMusic(name: "game_music", fileExtension: "mp3", volume: 0.4, loop: true)
 
-        guard let mtkView = view as? MTKView else {
-            print("ERROR: View of GameViewController is not an MTKView. View type: \(type(of: view))")
+        guard let sceneView = view as? SCNView else {
+            print("ERROR: View of GameViewController is not an SCNView. View type: \(type(of: view))")
             return
         }
         
-        self.mtkView = mtkView
-        print("DEBUG: MTKView cast successful")
-
-        // Select the device to render with.  We choose the default device
-        guard let defaultDevice = MTLCreateSystemDefaultDevice() else {
-            print("ERROR: Metal is not supported on this device")
-            return
-        }
+        self.sceneView = sceneView
+        print("DEBUG: SCNView cast successful")
         
-        print("DEBUG: Metal device created: \(defaultDevice.name)")
-        
-#if targetEnvironment(simulator)
-        print("WARNING: Metal 4 is not supported on simulator")
-        return
-#else
-        // Check for Metal 4 support
-        if !defaultDevice.supportsFamily(.metal4) {
-            print("ERROR: Metal 4 is not supported on this device")
-            print("DEBUG: Checking Metal family support:")
-            print("  - Metal 1: \(defaultDevice.supportsFamily(.common1))")
-            print("  - Metal 2: \(defaultDevice.supportsFamily(.common2))")
-            print("  - Metal 3: \(defaultDevice.supportsFamily(.common3))")
-            return
-        }
-        
-        print("DEBUG: Metal 4 is supported")
-        
-        mtkView.device = defaultDevice
-        mtkView.backgroundColor = UIColor.black
-        mtkView.preferredFramesPerSecond = 60
-        mtkView.enableSetNeedsDisplay = false  // Use automatic rendering
-        mtkView.isPaused = false  // Make sure view is not paused
-        
-        print("DEBUG: MTKView properties set")
-        print("DEBUG: - device: \(mtkView.device?.name ?? "nil")")
-        print("DEBUG: - isPaused: \(mtkView.isPaused)")
-        print("DEBUG: - enableSetNeedsDisplay: \(mtkView.enableSetNeedsDisplay)")
-        print("DEBUG: - drawableSize: \(mtkView.drawableSize)")
-
-        guard let newRenderer = Renderer(metalKitView: mtkView) else {
-            print("ERROR: Renderer cannot be initialized")
-            return
-        }
-
-        renderer = newRenderer
-        print("DEBUG: Renderer created successfully")
-
-        renderer.mtkView(mtkView, drawableSizeWillChange: mtkView.drawableSize)
-
-        mtkView.delegate = renderer
-        
-        print("DEBUG: MTKView delegate set: \(mtkView.delegate != nil)")
-        print("DEBUG: MTKView configured, drawableSize: \(mtkView.drawableSize)")
-        print("DEBUG: All setup complete, draw() should be called automatically")
+        // Создаем SceneKit рендерер
+        renderer = SceneKitRenderer(sceneView: sceneView)
+        print("DEBUG: SceneKitRenderer created successfully")
         
         // Add exit button FIRST so it can receive touches
         setupExitButton()
@@ -143,7 +95,6 @@ class GameViewController: UIViewController {
         
         // Add gesture recognizers for camera control (after renderer is set)
         setupGestures()
-#endif
     }
     
     func setupExitButton() {
@@ -348,10 +299,9 @@ class GameViewController: UIViewController {
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         print("DEBUG: viewDidAppear called")
-        if let mtkView = self.mtkView {
-            print("DEBUG: MTKView is visible, drawableSize: \(mtkView.drawableSize)")
-            print("DEBUG: MTKView delegate: \(mtkView.delegate != nil ? "set" : "nil")")
-            print("DEBUG: MTKView isPaused: \(mtkView.isPaused)")
+        if let sceneView = self.sceneView {
+            print("DEBUG: SCNView is visible, frame: \(sceneView.frame)")
+            print("DEBUG: SCNView scene: \(sceneView.scene != nil ? "set" : "nil")")
         }
         
         // Update overlay frame and bring to front

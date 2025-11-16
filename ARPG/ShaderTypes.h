@@ -61,13 +61,16 @@ typedef struct
     vector_float3 lightDirection;  // Sun direction (normalized)
     vector_float3 lightColor;      // Sun color
     vector_float3 ambientColor;    // Ambient light color
-    float padding0;
+    vector_float3 sunPosition;     // Sun position (point light) - центр карты, высокая позиция
+    float sunRadius;               // Радиус действия солнца
     vector_float4 baseColor;       // Base color/alpha for current draw
     MaterialType materialType;
     vector_float3 padding1;
     vector_float4 terrainUV;            // xy = detail scale, zw = detail offset
     vector_float4 terrainColorDetail;   // xyz = tint, w = detail intensity
     vector_float4 terrainWorld;         // xy = chunk origin (world), z = water level, w = reserved
+    vector_float4 heroLightPositionRadius; // xyz = hero light position, w = radius
+    vector_float4 heroLightColorIntensity; // rgb = color, w = intensity multiplier
 } Uniforms;
 
 #endif /* ShaderTypes_h */

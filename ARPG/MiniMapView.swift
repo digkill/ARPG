@@ -95,31 +95,25 @@ class MiniMapView: UIView {
     }
     
     private func drawIslandArea(in context: CGContext, rect: CGRect) {
-        // Draw water background
+        // Draw water background (square)
         context.setFillColor(waterColor.cgColor)
-        context.fillEllipse(in: rect)
+        context.fill(rect)
         
-        // Draw land/island area (circular with some variation)
-        let center = CGPoint(x: rect.midX, y: rect.midY)
-        let radius = min(rect.width, rect.height) * 0.45
+        // Draw land/island area (square with some variation)
+        let margin: CGFloat = rect.width * 0.05
+        let landRect = rect.insetBy(dx: margin, dy: margin)
         
         context.setFillColor(landColor.cgColor)
-        let islandPath = UIBezierPath(arcCenter: center,
-                                      radius: radius,
-                                      startAngle: 0,
-                                      endAngle: .pi * 2,
-                                      clockwise: true)
-        context.addPath(islandPath.cgPath)
-        context.fillPath()
+        context.fill(landRect)
         
         // Add some texture/noise to the island
         context.setBlendMode(.overlay)
         context.setFillColor(UIColor(white: 1.0, alpha: 0.1).cgColor)
         for _ in 0..<20 {
-            let noiseX = center.x + CGFloat.random(in: -radius...radius) * 0.8
-            let noiseY = center.y + CGFloat.random(in: -radius...radius) * 0.8
+            let noiseX = landRect.origin.x + CGFloat.random(in: 0...landRect.width)
+            let noiseY = landRect.origin.y + CGFloat.random(in: 0...landRect.height)
             let noiseRadius: CGFloat = 3.0
-            if sqrt(pow(noiseX - center.x, 2) + pow(noiseY - center.y, 2)) < radius {
+            if landRect.contains(CGPoint(x: noiseX, y: noiseY)) {
                 context.fillEllipse(in: CGRect(x: noiseX - noiseRadius, y: noiseY - noiseRadius,
                                                width: noiseRadius * 2, height: noiseRadius * 2))
             }
@@ -137,13 +131,13 @@ class MiniMapView: UIView {
     
     private func drawObjects(in context: CGContext, rect: CGRect) {
         context.setFillColor(objectColor.cgColor)
+        let margin: CGFloat = rect.width * 0.05
+        let landRect = rect.insetBy(dx: margin, dy: margin)
+        
         for pos in objectPositions.prefix(150) {
             let point = self.point(for: pos, in: rect)
-            // Only draw if within island area
-            let center = CGPoint(x: rect.midX, y: rect.midY)
-            let distance = sqrt(pow(point.x - center.x, 2) + pow(point.y - center.y, 2))
-            let maxDistance = min(rect.width, rect.height) * 0.45
-            if distance < maxDistance {
+            // Only draw if within square island area
+            if landRect.contains(point) {
                 context.fillEllipse(in: CGRect(x: point.x - objectMarkerSize * 0.5,
                                               y: point.y - objectMarkerSize * 0.5,
                                               width: objectMarkerSize,
