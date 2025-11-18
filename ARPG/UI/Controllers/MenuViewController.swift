@@ -31,7 +31,7 @@ class MenuViewController: UIViewController {
         
         view.backgroundColor = UIColor(red: 0.1, green: 0.1, blue: 0.15, alpha: 1.0)  // Dark blue background
         
-        setupLogo()
+     //   setupLogo()
         setupButtons()
         
         // Start background music

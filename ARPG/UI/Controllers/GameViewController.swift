@@ -49,13 +49,61 @@ class GameViewController: UIViewController {
         self.view = sceneView
     }
     
+    var selectedHero: HeroDefinition = HeroRegistry.shared.defaultHero
+    
     override func viewDidLoad() {
         super.viewDidLoad()
         
         print("DEBUG: viewDidLoad called")
         print("DEBUG: view type: \(type(of: view))")
         print("DEBUG: view frame: \(view.frame)")
+    }
+    
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        print("DEBUG: viewDidAppear called")
         
+        // Показываем окно выбора героя после того, как view появился
+        if renderer == nil {
+            showHeroSelection()
+        } else {
+            // Если игра уже запущена, обновляем UI
+            if let sceneView = self.sceneView {
+                print("DEBUG: SCNView is visible, frame: \(sceneView.frame)")
+                print("DEBUG: SCNView scene: \(sceneView.scene != nil ? "set" : "nil")")
+            }
+            
+            // Update overlay frame and bring to front
+            if let overlay = gestureOverlay {
+                overlay.frame = view.bounds
+                view.bringSubviewToFront(overlay)
+                // Bring exit button to front too
+                if let exitButton = view.subviews.first(where: { $0.tag == 999 }) {
+                    view.bringSubviewToFront(exitButton)
+                }
+                // Bring FPS label to front
+                if let fpsLabel = fpsLabel {
+                    view.bringSubviewToFront(fpsLabel)
+                }
+                print("DEBUG: Gesture overlay frame updated: \(overlay.frame)")
+            }
+        }
+    }
+    
+    private func showHeroSelection() {
+        let heroSelectionVC = HeroSelectionViewController()
+        heroSelectionVC.modalPresentationStyle = .overFullScreen
+        heroSelectionVC.onHeroSelected = { [weak self] hero in
+            guard let self = self else { return }
+            self.selectedHero = hero
+            heroSelectionVC.dismiss(animated: true) {
+                self.startGame()
+            }
+        }
+        present(heroSelectionVC, animated: true)
+    }
+    
+    private func startGame() {
         // Start game background music
         SoundManager.shared.playBackgroundMusic(name: "game_music", fileExtension: "mp3", volume: 0.4, loop: true)
 
@@ -67,9 +115,9 @@ class GameViewController: UIViewController {
         self.sceneView = sceneView
         print("DEBUG: SCNView cast successful")
         
-        // Создаем SceneKit рендерер
-        renderer = SceneKitRenderer(sceneView: sceneView)
-        print("DEBUG: SceneKitRenderer created successfully")
+        // Создаем SceneKit рендерер с выбранным героем
+        renderer = SceneKitRenderer(sceneView: sceneView, hero: selectedHero)
+        print("DEBUG: SceneKitRenderer created successfully with hero: \(selectedHero.displayName)")
         
         // Add exit button FIRST so it can receive touches
         setupExitButton()
@@ -294,30 +342,6 @@ class GameViewController: UIViewController {
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         print("DEBUG: viewWillAppear called")
-    }
-    
-    override func viewDidAppear(_ animated: Bool) {
-        super.viewDidAppear(animated)
-        print("DEBUG: viewDidAppear called")
-        if let sceneView = self.sceneView {
-            print("DEBUG: SCNView is visible, frame: \(sceneView.frame)")
-            print("DEBUG: SCNView scene: \(sceneView.scene != nil ? "set" : "nil")")
-        }
-        
-        // Update overlay frame and bring to front
-        if let overlay = gestureOverlay {
-            overlay.frame = view.bounds
-            view.bringSubviewToFront(overlay)
-            // Bring exit button to front too
-            if let exitButton = view.subviews.first(where: { $0.tag == 999 }) {
-                view.bringSubviewToFront(exitButton)
-            }
-            // Bring FPS label to front
-            if let fpsLabel = fpsLabel {
-                view.bringSubviewToFront(fpsLabel)
-            }
-            print("DEBUG: Gesture overlay frame updated: \(overlay.frame)")
-        }
     }
     
     override func viewDidLayoutSubviews() {

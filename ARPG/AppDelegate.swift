@@ -70,14 +70,14 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         
         print("DEBUG: Scene will connect, windowScene: \(windowScene)")
         
-        // Create window and show menu first
+        // Create window and show splash screen first
         let window = UIWindow(windowScene: windowScene)
-        let menuViewController = MenuViewController()
-        window.rootViewController = menuViewController
+        let splashViewController = SplashViewController()
+        window.rootViewController = splashViewController
         window.makeKeyAndVisible()
         self.window = window
         
-        print("DEBUG: Window created with MenuViewController as root")
+        print("DEBUG: Window created with SplashViewController as root")
     }
     
     func sceneDidBecomeActive(_ scene: UIScene) {
